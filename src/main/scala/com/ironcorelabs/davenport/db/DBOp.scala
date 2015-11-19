@@ -13,3 +13,4 @@ final case class UpdateDoc(key: Key, doc: RawJsonString, commitVersion: CommitVe
 final case class RemoveKey(key: Key) extends DBOp[DBError \/ Unit]
 final case class GetCounter(key: Key) extends DBOp[DBError \/ Long]
 final case class IncrementCounter(key: Key, delta: Long = 1) extends DBOp[DBError \/ Long]
+final case class ScanKeys(comparison: Comparison, value: String) extends DBOp[DBError \/ Process[Task, DBValue]]
