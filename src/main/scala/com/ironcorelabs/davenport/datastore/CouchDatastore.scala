@@ -8,19 +8,23 @@ package datastore
 
 import scalaz.{ \/, \/-, ~>, Kleisli, Free }
 import scalaz.concurrent.Task
-import scalaz.syntax.either._
+import scalaz.Scalaz._
 import db._
 import scalaz.stream.Process
+import db.{ Comparison, GTE, LTE, LT, GT, EQ }
 
 // Couchbase
 import com.couchbase.client.java.{ ReplicateTo, PersistTo, ReplicaMode, CouchbaseCluster, Bucket, AsyncBucket }
 import com.couchbase.client.java.env.{ CouchbaseEnvironment, DefaultCouchbaseEnvironment }
 import com.couchbase.client.java.document.{ AbstractDocument, JsonLongDocument, RawJsonDocument }
 import com.couchbase.client.java.error._
+import com.couchbase.client.java.query.N1qlQuery
+import com.couchbase.client.java.document.json._ //Need all the Json types
 
 // RxScala (Observables) used in Couchbase client lib async calls
 import rx.lang.scala.Observable
 import rx.lang.scala.JavaConversions._
+import scalaz.stream.async
 
 final case class CouchDatastore(bucket: Task[Bucket]) extends Datastore {
   import CouchDatastore._
@@ -41,8 +45,16 @@ final case class CouchDatastore(bucket: Task[Bucket]) extends Datastore {
  * For details about how this translation is done, look at couchRunner which routes each DBOp to its couchbase
  * counterpart.
  */
-final object CouchDatastore {
+final object CouchDatastore extends com.typesafe.scalalogging.StrictLogging {
   type CouchK[A] = Kleisli[Task, Bucket, A]
+  private[this] final val BoundedQueueSize = 10000
+
+  private[this] final val MetaString = "meta"
+  private[this] final val RecordString = "record"
+  //These are constants that match couchbase fields
+  private[this] final val IdString = "id"
+  private[this] final val CasString = "cas"
+  private[this] final val TypeString = "type"
 
   /**
    * Interpret the program into a Kleisli that will take a Bucket as its argument. Useful if you want to do
@@ -69,6 +81,69 @@ final object CouchDatastore {
       case IncrementCounter(k: Key, delta: Long) => incrementCounter(k, delta)
       case RemoveKey(k: Key) => removeKey(k)
       case UpdateDoc(k: Key, v: RawJsonString, cv: CommitVersion) => updateDoc(k, v, cv)
+      case ScanKeys(op: Comparison, value: String) => Kleisli.kleisli(scanKeys(op, value).map(_.right.point[Task]))
+    }
+
+    private def scanField(field: String, op: Comparison, value: String): Bucket => Process[Task, DBValue] = { bucket: Bucket =>
+      val query = createStatement(bucket.name, field, op, value)
+      observableToProcess(bucket.async.query(query)).flatMap(result => observableToProcess(result.rows)).flatMap { row =>
+        logger.debug("Recieved row" + row.value.toString)
+        val maybeMetadata = Option(row.value.getObject(MetaString)).flatMap(extractFromMeta(_))
+        val (keyString, cas, typ) = maybeMetadata.getOrElse(throw new Exception(s"${row.value.toString} was screwed up in a way we couldn't understand at all."))
+        val maybeStringifiedValue = getJsonString(row.value.get(RecordString), typ)
+        maybeStringifiedValue.map { result =>
+          Process.emit(DBDocument[RawJsonString](Key(keyString), CommitVersion(cas), RawJsonString(result)))
+        }.getOrElse(Process.empty) //Flatten things we can't deal with out of existence.
+      }
+    }
+
+    /**
+     * Extract the key, cas and type of record from the meta Json
+     */
+    private def extractFromMeta(meta: JsonObject): Option[(String, Long, String)] =
+      for {
+        key <- Option(meta.getString(IdString))
+        cas <- Option(meta.getLong(CasString))
+        typ <- Option(meta.getString(TypeString))
+      } yield (key, cas, typ)
+
+    private def getJsonString(couchbaseObject: Any, fieldType: String): Option[String] = fieldType match {
+        case "json" =>
+          couchbaseObject match {
+            case v: String => v.toString.some
+            case v: Integer => v.toString.some
+            case v: Long => v.toString.some
+            case v: Double => v.toString.some
+            case v: Boolean => v.toString.some
+            case v: JsonObject => v.toString.some
+            case v: JsonArray => v.toString.some
+            case x => //This is a dev exception. If this happens you need to handle the case.
+              throw new Exception(s"All Json types should be covered, but found '$x'")
+          }
+        case typ =>
+          logger.warn(s"Was asked to decode json, but found '$typ'.")
+          None
+      }
+
+    private def scanKeys(op: Comparison, value: String): Bucket => Process[Task, DBValue] =
+      scanField(s"meta($RecordString).id", op, value)
+
+    private def opToFunc(op: Comparison)(name: String): String = {
+      val string = op match {
+        case EQ => "="
+        case GT => ">"
+        case LT => "<"
+        case LTE => "<="
+        case GTE => ">="
+      }
+      name + string + "$1"
+    }
+
+    private def createStatement(bucketName: String, field: String, op: Comparison, value: String): N1qlQuery = {
+      import scala.collection.JavaConverters._
+      val queryString = s"SELECT $RecordString, meta($RecordString) as $MetaString FROM $bucketName $RecordString where ${opToFunc(op)(field)};"
+      logger.debug(s"Query created: '$queryString' with $value")
+      N1qlQuery.parameterized(queryString, JsonArray.from(List(value).asJava))
     }
 
     /*
@@ -114,12 +189,14 @@ final object CouchDatastore {
     // These lines are too long for scalastyle, but can't find a way to stop
     // scalastyle from pasting them back together wherever I split them, so
     // they are getting the big ignore hammer.
-    private def couchOpToDBValue(k: Key)(fetchOp: AsyncBucket => Observable[RawJsonDocument]): CouchK[DBError \/ DBValue] = // scalastyle:ignore
-      couchOpToA(fetchOp)(doc => DBDocument(k, CommitVersion(doc.cas), RawJsonString(doc.content))).
-        map(_.leftMap(throwableToDBError(k, _)))
+    private def couchOpToDBValue(k: Key)(
+      fetchOp: AsyncBucket => Observable[RawJsonDocument]
+    ): CouchK[DBError \/ DBValue] = {
+      couchOpToA(fetchOp) { doc => DBDocument(k, CommitVersion(doc.cas), RawJsonString(doc.content)) }
+        .map(_.leftMap(throwableToDBError(k, _)))
+    }
 
-    private def couchOpToA[A, B](fetchOp: AsyncBucket => Observable[AbstractDocument[B]])(f: AbstractDocument[B] => A): Kleisli[Task, Bucket, Throwable \/ A] = { // scalastyle:ignore
-
+    private def couchOpToA[A, B](fetchOp: AsyncBucket => Observable[AbstractDocument[B]])(f: AbstractDocument[B] => A): CouchK[Throwable \/ A] = { // scalastyle:ignore
       Kleisli.kleisli { bucket: Bucket =>
         obs2Task(fetchOp(bucket.async)).map(_.map(f))
       }
@@ -145,6 +222,19 @@ final object CouchDatastore {
         )
         ()
       }).attempt
+    }
+
+    private def observableToProcess[A](o: Observable[A]): Process[Task, A] = {
+      val queue = async.boundedQueue[A](BoundedQueueSize, true)
+      o.subscribe(
+        n => queue.enqueueOne(n).run,
+        { ex =>
+          logger.error("Error retrieving value from couchbase.", ex)
+          queue.kill.run
+        },
+        () => queue.close.run
+      )
+      queue.dequeue
     }
   }
 }
