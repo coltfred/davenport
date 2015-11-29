@@ -108,22 +108,22 @@ final object CouchDatastore extends com.typesafe.scalalogging.StrictLogging {
       } yield (key, cas, typ)
 
     private def getJsonString(couchbaseObject: Any, fieldType: String): Option[String] = fieldType match {
-        case "json" =>
-          couchbaseObject match {
-            case v: String => v.toString.some
-            case v: Integer => v.toString.some
-            case v: Long => v.toString.some
-            case v: Double => v.toString.some
-            case v: Boolean => v.toString.some
-            case v: JsonObject => v.toString.some
-            case v: JsonArray => v.toString.some
-            case x => //This is a dev exception. If this happens you need to handle the case.
-              throw new Exception(s"All Json types should be covered, but found '$x'")
-          }
-        case typ =>
-          logger.warn(s"Was asked to decode json, but found '$typ'.")
-          None
-      }
+      case "json" =>
+        couchbaseObject match {
+          case v: String => v.toString.some
+          case v: Integer => v.toString.some
+          case v: Long => v.toString.some
+          case v: Double => v.toString.some
+          case v: Boolean => v.toString.some
+          case v: JsonObject => v.toString.some
+          case v: JsonArray => v.toString.some
+          case x => //This is a dev exception. If this happens you need to handle the case.
+            throw new Exception(s"All Json types should be covered, but found '$x'")
+        }
+      case typ =>
+        logger.warn(s"Was asked to decode json, but found '$typ'.")
+        None
+    }
 
     private def scanKeys(op: Comparison, value: String): Bucket => Process[Task, DBValue] =
       scanField(s"meta($RecordString).id", op, value)
