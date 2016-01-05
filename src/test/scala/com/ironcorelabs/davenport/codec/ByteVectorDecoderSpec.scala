@@ -17,7 +17,7 @@ class ByteVectorDecoderSpec extends TestBase {
   val utf16Bytes = ByteVector.view(stringWithUnicode.getBytes("UTF16"))
 
   implicit def arbByteDecoder[A: Arbitrary] = Arbitrary {
-    arbitrary[ByteVector => A].map(f => ByteVectorDecoder(f.map(_.right)))
+    arbitrary[ByteVector => A].map(f => ByteVectorDecoder.fromFunction(f.map(_.right)))
   }
 
   "ByteVectorDecoder" should {

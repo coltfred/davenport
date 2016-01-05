@@ -7,16 +7,18 @@ package internal
 import com.couchbase.client.deps.io.netty.buffer.{ ByteBuf, Unpooled }
 import scalaz.concurrent.Task
 import scalaz.\/
+import scalaz.Scalaz._ //TODO narrow this down
 import com.couchbase.client.core.message.kv._
 import com.couchbase.client.core.{ CouchbaseException, CouchbaseCore }
-import com.couchbase.client.core.message.ResponseStatus
+import com.couchbase.client.core.message.{ResponseStatus,CouchbaseResponse}
+import com.couchbase.client.core.message.query.{ GenericQueryResponse, GenericQueryRequest }
 import rx.lang.scala.Observable
 import rx.lang.scala.JavaConversions._
 import db._
 import error._
 import scodec.bits.ByteVector
 import scala.concurrent.duration.Duration
-import codec.{ ByteVectorDecoder, ByteVectorEncoder }
+import codec.{ ByteVectorDecoder, ByteVectorEncoder, DecodeError }
 
 /**
  * A reference to a "Bucket" in couchbase. This bucket will be communicating with core.
@@ -58,6 +60,9 @@ final class Bucket(core: CouchbaseCore, val name: String, password: Option[Strin
   final def update[A: ByteVectorEncoder](key: Key, value: A, cas: Long): Task[DBDocument[A]] =
     Bucket.replace(core, name, key.value, encodeToByteVector(value), cas, None).map(_.map(_ => value))
 
+  final def query[A](query:N1qlQuery)(implicit decoder: ByteVectorDecoder[A]): Task[List[DocumentDecodeFailedException \/ A]] = 
+    Bucket.query(core,name,password,query).map(_.map(decoder.decode(_).leftMap(DocumentDecodeFailedException(_))))
+
   private final def decodeDBDocument[A](t: Task[DBDocument[ByteVector]])(implicit decoder: ByteVectorDecoder[A]): Task[DBDocument[A]] = {
     t.flatMap { document =>
       val errorOrA = Task.fromDisjunction(decoder.decode(document.data).leftMap(DocumentDecodeFailedException(_)))
@@ -72,7 +77,7 @@ final class Bucket(core: CouchbaseCore, val name: String, password: Option[Strin
  * Object to store helper (state agnostic) functions for the Bucket class.
  */
 private object Bucket {
-  import util.observable.toSingleItemTask
+  import util.observable.{ toSingleItemTask, toListTask }
 
   def apply(core: CouchbaseCore, name: String): Bucket = apply(core, name, None)
   def apply(core: CouchbaseCore, name: String, password: Option[String]): Bucket = new Bucket(core, name, password)
@@ -122,6 +127,24 @@ private object Bucket {
     }
   }
 
+  def query(core: CouchbaseCore,bucket: String,    password: Option[String],    query: N1qlQuery  ): Task[List[ByteVector]] = {
+    val jsonRequest = N1qlQuery.createRequestCodec(bucket)(query)
+    //TODO I have to consume the errors, info, etc or at least route them into the round file
+    for{
+      response <- toSingleItemTask(core.send[GenericQueryResponse](GenericQueryRequest.jsonQuery(jsonRequest.nospaces, bucket, password.getOrElse(""))))
+      responseIfSuccess <- Task.fromDisjunction(defaultResponseProcessor("", bucket,response))
+      rows <- toListTaskAndReadBytes(response.rows)
+      signature <- toListTaskAndReadBytes(response.signature)
+      errors <- toListTaskAndReadBytes(response.errors)
+      queryStatus <- toListTask(response.queryStatus)
+      info <- toListTaskAndReadBytes(response.info)
+    } yield rows
+  }
+
+private def toListTaskAndReadBytes(o: Observable[ByteBuf]): Task[List[ByteVector]] =
+  toListTask(o).map(_.map(readBytesAndFree(_)))
+  
+
   private def toByteVectorWithCustomErrorHandling(
     id: String,
     bucket: String,
@@ -131,10 +154,6 @@ private object Bucket {
   private def toByteVector(id: String, bucket: String, res: AbstractKeyValueResponse): Task[ByteVector] =
     toByteVectorWithCustomErrorHandling(id, bucket, res)(PartialFunction.empty[ResponseStatus, CouchbaseError])
 
-  /**
-   * Process the response and free the ByteBuf associated with it. We do both of these things in an
-   * eager way to avoid doing it more than once.
-   */
   private def processResponse[A](
     id: String,
     bucket: String,
@@ -160,9 +179,6 @@ private object Bucket {
           Task.fail(new CouchbaseException(s"Error '${res.status().toString}' returned from the couchbase server."))
       }
     }
-    //Free the bytebuf.
-    Option(res.content()).filter(_.refCnt > 0).foreach(_.release)
-    result
   }
 
   /**
@@ -173,4 +189,12 @@ private object Bucket {
     b.readBytes(bytes)
     ByteVector.view(bytes)
   }
+
+  private def readBytesAndFree(b:ByteBuf):ByteVector = {
+    val result = readBytes(b)
+    freeByteBuf(b)
+    result
+  }
+  private def freeByteBuf(b:ByteBuf): Unit = 
+Option(b).filter(_.refCnt > 0).foreach(_.release)
 }

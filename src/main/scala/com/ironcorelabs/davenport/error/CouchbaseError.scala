@@ -11,9 +11,10 @@ final case class DocumentDoesNotExistException(documentKey: String, bucketName: 
 final case class BucketDoesNotExistException(bucketName: String) extends CouchbaseException(s"'$bucketName' does not exist.") with CouchbaseError
 final case class DocumentAlreadyExistsException(id: String) extends CouchbaseException(s"Document with id '$id' already exists.") with CouchbaseError
 final case class CouchbaseOutOfMemoryException() extends CouchbaseException("Couchbase is out of memory.") with CouchbaseError
-final case class CASMismatchException(id: String) extends CouchbaseException(s"The passed in CAS for '$id' didn't match the expected.")
-final case class RequestTooBigException() extends CouchbaseException("The request was too big.")
-final case class TemporaryFailureException() extends CouchbaseException("The couchbase cluster had a transient error. Try your request again.")
+final case class CASMismatchException(id: String) extends CouchbaseException(s"The passed in CAS for '$id' didn't match the expected.") with CouchbaseError
+final case class RequestTooBigException() extends CouchbaseException("The request was too big.") with CouchbaseError
+final case class TemporaryFailureException() extends CouchbaseException("The couchbase cluster had a transient error. Try your request again.") with CouchbaseError
+final case class GenericException(message: String) extends CouchbaseException(message) with CouchbaseError
 // scalastyle:on line.size.limit
 
 //For the following I need to defer which constructor to call in the base class which I cannot do using the normal syntax.
