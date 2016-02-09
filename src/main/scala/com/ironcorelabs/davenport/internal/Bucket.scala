@@ -10,7 +10,7 @@ import scalaz.\/
 import scalaz.Scalaz._ //TODO narrow this down
 import com.couchbase.client.core.message.kv._
 import com.couchbase.client.core.{ CouchbaseException, CouchbaseCore }
-import com.couchbase.client.core.message.{ResponseStatus,CouchbaseResponse}
+import com.couchbase.client.core.message.{ ResponseStatus, CouchbaseResponse }
 import com.couchbase.client.core.message.query.{ GenericQueryResponse, GenericQueryRequest }
 import rx.lang.scala.Observable
 import rx.lang.scala.JavaConversions._
@@ -60,8 +60,8 @@ final class Bucket(core: CouchbaseCore, val name: String, password: Option[Strin
   final def update[A: ByteVectorEncoder](key: Key, value: A, cas: Long): Task[DBDocument[A]] =
     Bucket.replace(core, name, key.value, encodeToByteVector(value), cas, None).map(_.map(_ => value))
 
-  final def query[A](query:N1qlQuery)(implicit decoder: ByteVectorDecoder[A]): Task[List[DocumentDecodeFailedException \/ A]] = 
-    Bucket.query(core,name,password,query).map(_.map(decoder.decode(_).leftMap(DocumentDecodeFailedException(_))))
+  final def query[A](query: N1qlQuery)(implicit decoder: ByteVectorDecoder[A]): Task[List[DocumentDecodeFailedException \/ A]] =
+    Bucket.query(core, name, password, query).map(_.map(decoder.decode(_).leftMap(DocumentDecodeFailedException(_))))
 
   private final def decodeDBDocument[A](t: Task[DBDocument[ByteVector]])(implicit decoder: ByteVectorDecoder[A]): Task[DBDocument[A]] = {
     t.flatMap { document =>
@@ -127,12 +127,11 @@ private object Bucket {
     }
   }
 
-  def query(core: CouchbaseCore,bucket: String,    password: Option[String],    query: N1qlQuery  ): Task[List[ByteVector]] = {
+  def query(core: CouchbaseCore, bucket: String, password: Option[String], query: N1qlQuery): Task[List[ByteVector]] = {
     val jsonRequest = N1qlQuery.createRequestCodec(bucket)(query)
     //TODO I have to consume the errors, info, etc or at least route them into the round file
-    for{
+    for {
       response <- toSingleItemTask(core.send[GenericQueryResponse](GenericQueryRequest.jsonQuery(jsonRequest.nospaces, bucket, password.getOrElse(""))))
-      responseIfSuccess <- Task.fromDisjunction(defaultResponseProcessor("", bucket,response))
       rows <- toListTaskAndReadBytes(response.rows)
       signature <- toListTaskAndReadBytes(response.signature)
       errors <- toListTaskAndReadBytes(response.errors)
@@ -141,9 +140,8 @@ private object Bucket {
     } yield rows
   }
 
-private def toListTaskAndReadBytes(o: Observable[ByteBuf]): Task[List[ByteVector]] =
-  toListTask(o).map(_.map(readBytesAndFree(_)))
-  
+  private def toListTaskAndReadBytes(o: Observable[ByteBuf]): Task[List[ByteVector]] =
+    toListTask(o).map(_.map(readBytesAndFree(_)))
 
   private def toByteVectorWithCustomErrorHandling(
     id: String,
@@ -162,8 +160,8 @@ private def toListTaskAndReadBytes(o: Observable[ByteBuf]): Task[List[ByteVector
     val status = res.status()
     val maybeHandledError = specialErrorHandler.lift(status).map(Task.fail(_))
 
-    val result = maybeHandledError.getOrElse {
-      res.status() match {
+    maybeHandledError.getOrElse {
+      status match {
         case ResponseStatus.SUCCESS => Task.now(onSuccess(res))
         case ResponseStatus.NOT_EXISTS => Task.fail(DocumentDoesNotExistException(id, bucket))
         case ResponseStatus.EXISTS => Task.fail(CASMismatchException(id))
@@ -190,11 +188,11 @@ private def toListTaskAndReadBytes(o: Observable[ByteBuf]): Task[List[ByteVector
     ByteVector.view(bytes)
   }
 
-  private def readBytesAndFree(b:ByteBuf):ByteVector = {
+  private def readBytesAndFree(b: ByteBuf): ByteVector = {
     val result = readBytes(b)
     freeByteBuf(b)
     result
   }
-  private def freeByteBuf(b:ByteBuf): Unit = 
-Option(b).filter(_.refCnt > 0).foreach(_.release)
+  private def freeByteBuf(b: ByteBuf): Unit =
+    Option(b).filter(_.refCnt > 0).foreach(_.release)
 }
