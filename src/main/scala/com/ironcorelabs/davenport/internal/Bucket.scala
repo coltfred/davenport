@@ -6,7 +6,7 @@ package internal
 
 import com.couchbase.client.deps.io.netty.buffer.{ ByteBuf, Unpooled }
 import scalaz.concurrent.Task
-import scalaz.\/
+import scalaz._
 import scalaz.Scalaz._ //TODO narrow this down
 import com.couchbase.client.core.message.kv._
 import com.couchbase.client.core.{ CouchbaseException, CouchbaseCore }
@@ -60,7 +60,7 @@ final class Bucket(core: CouchbaseCore, val name: String, password: Option[Strin
   final def update[A: ByteVectorEncoder](key: Key, value: A, cas: Long): Task[DBDocument[A]] =
     Bucket.replace(core, name, key.value, encodeToByteVector(value), cas, None).map(_.map(_ => value))
 
-  final def query[A](query: N1qlQuery)(implicit decoder: ByteVectorDecoder[A]): Task[List[DocumentDecodeFailedException \/ A]] =
+  final def query[A](query: N1qlQuery)(implicit decoder: ByteVectorDecoder[A]): Task[N1qlResponse[DocumentDecodeFailedException \/ A]] =
     Bucket.query(core, name, password, query).map(_.map(decoder.decode(_).leftMap(DocumentDecodeFailedException(_))))
 
   private final def decodeDBDocument[A](t: Task[DBDocument[ByteVector]])(implicit decoder: ByteVectorDecoder[A]): Task[DBDocument[A]] = {
@@ -76,8 +76,8 @@ final class Bucket(core: CouchbaseCore, val name: String, password: Option[Strin
 /**
  * Object to store helper (state agnostic) functions for the Bucket class.
  */
-private object Bucket {
-  import util.observable.{ toSingleItemTask, toListTask }
+private object Bucket extends com.typesafe.scalalogging.StrictLogging {
+  import util.observable.{ toSingleItemTask, toListTask, toOptionTask }
 
   def apply(core: CouchbaseCore, name: String): Bucket = apply(core, name, None)
   def apply(core: CouchbaseCore, name: String, password: Option[String]): Bucket = new Bucket(core, name, password)
@@ -127,21 +127,38 @@ private object Bucket {
     }
   }
 
-  def query(core: CouchbaseCore, bucket: String, password: Option[String], query: N1qlQuery): Task[List[ByteVector]] = {
+  def query(core: CouchbaseCore, bucket: String, password: Option[String], query: N1qlQuery)(implicit signatureDecoder: ByteVectorDecoder[N1qlSignature], infoDecoder: ByteVectorDecoder[N1qlResponseInfo]): Task[N1qlResponse[ByteVector]] = {
     val jsonRequest = N1qlQuery.createRequestCodec(bucket)(query)
+    val byteVectorStringDecoder = ByteVectorDecoder[String]
     //TODO I have to consume the errors, info, etc or at least route them into the round file
     for {
       response <- toSingleItemTask(core.send[GenericQueryResponse](GenericQueryRequest.jsonQuery(jsonRequest.nospaces, bucket, password.getOrElse(""))))
       rows <- toListTaskAndReadBytes(response.rows)
-      signature <- toListTaskAndReadBytes(response.signature)
+      signature <- toOptionTaskAndReadBytes(response.signature)
       errors <- toListTaskAndReadBytes(response.errors)
-      queryStatus <- toListTask(response.queryStatus)
-      info <- toListTaskAndReadBytes(response.info)
-    } yield rows
+      _ <- toOptionTask(response.queryStatus)
+      info <- toOptionTaskAndReadBytes(response.info)
+      _ = logger.debug(bytesToStringForLogging("rows", rows))
+      _ = logger.debug(bytesToStringForLogging("signature", signature))
+      _ = logger.debug(bytesToStringForLogging("errors", errors))
+      _ = logger.debug(bytesToStringForLogging("info", info))
+    } yield N1qlResponse(info.flatMap(infoDecoder(_).toOption), signature.flatMap(signatureDecoder(_).toOption), errors, rows)
+  }
+
+  private def bytesToStringForLogging[F[_]: Foldable](label: String, fOfBytes: F[ByteVector]): String = {
+    val listOfBytes = fOfBytes.toList
+    val resultOrError = listOfBytes.traverseU(_.decodeUtf8.disjunction).map { listOfStrings =>
+      val valueString = listOfStrings.mkString(",")
+      s"'$label' is '$valueString'"
+    }
+    resultOrError.getOrElse(s"Byte vector for '$label' was not a UTF8 character sequence.")
   }
 
   private def toListTaskAndReadBytes(o: Observable[ByteBuf]): Task[List[ByteVector]] =
     toListTask(o).map(_.map(readBytesAndFree(_)))
+
+  private def toOptionTaskAndReadBytes(o: Observable[ByteBuf]): Task[Option[ByteVector]] =
+    toOptionTask(o).map(_.map(readBytesAndFree(_)))
 
   private def toByteVectorWithCustomErrorHandling(
     id: String,

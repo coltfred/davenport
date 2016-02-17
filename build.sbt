@@ -18,7 +18,9 @@ libraryDependencies ++= Seq(
   "io.reactivex" %% "rxscala" % "0.25.0", // to better work with the couchbase java client
   "io.argonaut" %% "argonaut" % "6.1", // json (de)serialization scalaz style
   "org.scalaz.stream" %% "scalaz-stream" % "0.7.2a",
-  "org.scodec" %% "scodec-bits" % "1.0.12"
+  "org.scodec" %% "scodec-bits" % "1.0.12",
+  "com.typesafe.scala-logging" %% "scala-logging" % "3.1.0",
+    "org.slf4j" % "slf4j-api" % "1.7.16" // scala-logging pulls in a version, we should get the latest.
 )
 
 // Test

@@ -10,9 +10,10 @@ import scalaz.{ \/, Kleisli, ~>, Free }
 import scalaz.concurrent.Task
 import scalaz.syntax.traverse._
 import scalaz.std.list._
+import scalaz.syntax.either._
 import db._
 
-import internal.{ Bucket, N1qlQuery }
+import internal.{ Bucket, N1qlQuery, N1qlResponse }
 import codec._
 import argonaut._
 
@@ -67,7 +68,7 @@ final object CouchDatastore {
       case RemoveKey(k: Key) => removeKey(k)
       case UpdateDoc(k: Key, v: RawJsonString, cv: CommitVersion) => updateDoc(k, v, cv)
       case ScanKeys(op: Comparison, value: String, limit: Int, offset: Int, consistency: ScanConsistency) =>
-        scanKeys(op, value, limit, offset, consistency)
+        scanKeys[DBValue](op, value, limit, offset, consistency)
     }
 
     /*
@@ -82,14 +83,9 @@ final object CouchDatastore {
     private def updateDoc(k: Key, v: RawJsonString, cv: CommitVersion): CouchK[DBError \/ DBValue] =
       bucketToA(k) { _.update(k, v, cv.value) }
 
-    private def scanKeys(op: Comparison, value: String, limit: Int, offset: Int, consistency: ScanConsistency): CouchK[DBError \/ List[DBValue]] = Kleisli.kleisli { bucket =>
+    private def scanKeys[A: ByteVectorDecoder](op: Comparison, value: String, limit: Int, offset: Int, consistency: ScanConsistency): CouchK[DBError \/ N1qlResponse[A]] = Kleisli.kleisli { bucket =>
       val n1qlQuery = N1qlQuery.selectRecordForId(value, op, limit, offset, consistency)
-
-      bucket.query[Json](n1qlQuery).map {
-        _.sequenceU.map { jsonList =>
-          jsonList.flatMap(N1qlQuery.jsonToDBDocument(_)) //COLT DBDocument probably isn't right. 
-        }.leftMap(ex => DeserializationError(Key(""), ex.getMessage)) //COLT: There is no key... this failure really means the whole response was screwed up. 
-      }
+      bucket.query[A](n1qlQuery).map(_.map(_.valueOr(throw _)).right)
     }
 
     private def bucketToA[A, B](key: Key)(fetchOp: Bucket => Task[A]): Kleisli[Task, Bucket, DBError \/ A] =

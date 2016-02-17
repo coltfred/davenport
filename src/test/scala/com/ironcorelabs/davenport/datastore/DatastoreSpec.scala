@@ -264,7 +264,6 @@ abstract class DatastoreSpec extends TestBase {
         val jsonData = RawJsonString(l.jencode.nospaces)
         val (key, value) = createSingleAndScan(createDoc(k2, jsonData), EQ).value
         key shouldBe k2
-        println(value)
         value.value.decode[Long].value shouldBe l
       }
       "handle Boolean" in {
