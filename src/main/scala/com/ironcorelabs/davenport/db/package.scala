@@ -29,25 +29,29 @@ package object db {
   //
 
   /** Return a document given some key */
-  def getDoc(k: Key): DBProg[DBValue] = liftToFreeEitherT(GetDoc(k))
+  def getDoc(k: Key): DBOps[DBValue] = liftToFree(GetDoc(k))
 
   /** Create a document with the given key */
-  def createDoc(k: Key, doc: RawJsonString): DBProg[DBValue] =
-    liftToFreeEitherT(CreateDoc(k, doc))
+  def createDoc(k: Key, doc: RawJsonString): DBOps[DBValue] =
+    liftToFree(CreateDoc(k, doc))
 
   /** Update a doc given its key, new value, and correct commitVersion */
-  def updateDoc(k: Key, doc: RawJsonString, commitVersion: CommitVersion): DBProg[DBValue] =
-    liftToFreeEitherT(UpdateDoc(k, doc, commitVersion))
+  def updateDoc(k: Key, doc: RawJsonString, commitVersion: CommitVersion): DBOps[DBValue] =
+    liftToFree(UpdateDoc(k, doc, commitVersion))
 
   /** Remove a doc from the DB given its key */
-  def removeKey(k: Key): DBProg[Unit] = liftToFreeEitherT(RemoveKey(k))
+  def removeKey(k: Key): DBOps[Unit] = liftToFree(RemoveKey(k))
 
   /** Fetch a counter from the DB given a key */
-  def getCounter(k: Key): DBProg[Long] = liftToFreeEitherT(GetCounter(k))
+  def getCounter(k: Key): DBOps[Long] = liftToFree(GetCounter(k))
 
   /** Increment a counter in the DB and return for some key and delta */
-  def incrementCounter(k: Key, delta: Long = 1): DBProg[Long] =
-    liftToFreeEitherT(IncrementCounter(k, delta))
+  def incrementCounter(k: Key, delta: Long = 1): DBOps[Long] =
+    liftToFree(IncrementCounter(k, delta))
+
+  def pure[A](a: => A): DBOps[A] = liftToFree(Pure(() => a))
+
+  def attemptDBError[A](op: DBOps[A]): DBOps[DBError \/ A] = liftToFree(Attempt(op)).map(_.leftMap(DBError.fromThrowable))
 
   //
   // Common combinators for DBProg
@@ -60,7 +64,7 @@ package object db {
    *  this. More commonly a higher level class that can be serialized to the db
    *  will have a modify function that transforms and calls this under the hood.
    */
-  def modifyDoc(k: Key, f: RawJsonString => RawJsonString): DBProg[DBValue] = for {
+  def modifyDoc(k: Key, f: RawJsonString => RawJsonString): DBOps[DBValue] = for {
     t <- getDoc(k)
     res <- updateDoc(k, f(t.data), t.commitVersion)
   } yield res
@@ -74,7 +78,7 @@ package object db {
    */
   def liftIntoDBProg[A](opt: Option[A], dbError: DBError): DBProg[A] = EitherT.eitherT(Monad[DBOps].point(opt \/> dbError))
   def liftIntoDBProg[A](opt: Option[A], errormessage: String): DBProg[A] = liftIntoDBProg(opt, GeneralError(new Exception(errormessage)))
-  def liftIntoDBProg[A](either: Throwable \/ A): DBProg[A] = liftDisjunction(either.leftMap(GeneralError(_)))
+  def liftToDBProg[A](ops: DBOps[A]): DBProg[A] = EitherT.eitherT(attemptDBError(ops))
   def liftDisjunction[A](either: DBError \/ A): DBProg[A] = EitherT.eitherT(Monad[DBOps].point(either))
-  private def liftToFreeEitherT[A](a: DBOp[DBError \/ A]): DBProg[A] = EitherT.eitherT[DBOps, DBError, A](Free.liftFC(a))
+  private def liftToFree[A](a: DBOp[A]): DBOps[A] = Free.liftFC(a)
 }

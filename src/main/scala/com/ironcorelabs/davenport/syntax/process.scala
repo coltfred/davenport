@@ -6,7 +6,9 @@ package syntax
 
 import scalaz.concurrent.Task
 import scalaz.stream.Process
-import db.DBOps
+import db.{ DBOps, DBProg }
+import scalaz.\/
+
 import datastore.Datastore
 
 // The convention is for syntax objects to start with lower case, so they look

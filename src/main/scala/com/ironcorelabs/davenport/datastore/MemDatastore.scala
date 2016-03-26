@@ -6,8 +6,7 @@ package datastore
 
 import scalaz.concurrent.Task
 import scalaz.stream.Process
-import scalaz._
-import scalaz.syntax.either._
+import scalaz._, Scalaz._
 import db._
 
 abstract class MemDatastore extends Datastore {
@@ -50,54 +49,52 @@ object MemDatastore {
   private[davenport] def genCommitVersion(s: RawJsonString): CommitVersion =
     CommitVersion(scala.util.hashing.MurmurHash3.stringHash(s.value).toLong)
 
-  private def modifyState(s: KVMap): (KVMap, DBError \/ Unit) = s -> ().right
-  private def modifyStateDbv(s: KVMap, dbv: DBValue): (KVMap, DBError \/ DBValue) = s -> dbv.right
-  private def notFoundError[A](key: Key): DBError \/ A = ValueNotFound(key).left
+  private def modifyStateDbv(s: KVMap, dbv: DBValue): (KVMap, DBValue) = s -> dbv
   //Convienience method to lift f into KVState.
   private def state[A](f: KVMap => (KVMap, A)): KVState[A] = StateT[Task, KVMap, A] { map =>
     Task.delay(f(map))
   }
 
-  private def getDoc(k: Key): KVState[DBError \/ DBValue] = {
+  private def getDoc(k: Key): KVState[DBValue] = {
     state { m: KVMap =>
-      m.get(k).map(json => m -> DBDocument(k, genCommitVersion(json), json).right)
-        .getOrElse(m -> notFoundError[DBValue](k))
+      m.get(k).map(json => m -> DBDocument(k, genCommitVersion(json), json))
+        .getOrElse(throw error.DocumentDoesNotExistException(k.value, "Memory"))
     }
   }
 
-  private def updateDoc(k: Key, doc: RawJsonString, commitVersion: CommitVersion): KVState[DBError \/ DBValue] = {
+  private def updateDoc(k: Key, doc: RawJsonString, commitVersion: CommitVersion): KVState[DBValue] = {
     state { m: KVMap =>
       m.get(k).map { json =>
         val storedCommitVersion = genCommitVersion(json)
         if (commitVersion == storedCommitVersion) {
           modifyStateDbv(m + (k -> doc), DBDocument(k, genCommitVersion(doc), doc))
         } else {
-          m -> (CommitVersionMismatch(k).left)
+          throw error.CASMismatchException(k.value)
         }
-      }.getOrElse(m -> notFoundError(k))
+      }.getOrElse(throw error.DocumentDoesNotExistException(k.value, "Memory"))
     }
   }
 
-  private def getCounter(k: Key): KVState[DBError \/ Long] = {
+  private def getCounter(k: Key): KVState[Long] = {
     state { m: KVMap =>
       m.get(k).map { json =>
-        m -> \/.fromTryCatchNonFatal(json.value.toLong).leftMap(GeneralError(_))
+        m -> json.value.toLong
       } getOrElse {
-        (m + (k -> RawJsonString("0")) -> 0L.right)
+        (m + (k -> RawJsonString("0")) -> 0L)
       }
     }
   }
 
-  private def incrementCounter(k: Key, delta: Long): KVState[DBError \/ Long] = {
+  private def incrementCounter(k: Key, delta: Long): KVState[Long] = {
     state { m: KVMap =>
       m.get(k).map { json =>
         // convert to long and increment by delta
-        val newval = \/.fromTryCatchNonFatal(json.value.toLong + delta).leftMap(GeneralError(_))
-        val newMap = newval.fold(_ => m, v => m + (k -> RawJsonString(v.toString)))
+        val newval = json.value.toLong + delta
+        val newMap = m + (k -> RawJsonString(newval.toString))
         newMap -> newval
       }.getOrElse {
         // save delta to db
-        (m + (k -> RawJsonString(delta.toString)), delta.right)
+        (m + (k -> RawJsonString(delta.toString)), delta)
       }
     }
   }
@@ -105,18 +102,27 @@ object MemDatastore {
   private def toKVState: DBOp ~> KVState = new (DBOp ~> KVState) {
     def apply[A](op: DBOp[A]): KVState[A] = {
       op match {
-        case GetDoc(k: Key) => getDoc(k)
+        case GetDoc(k) => getDoc(k)
         case UpdateDoc(k, doc, commitVersion) => updateDoc(k, doc, commitVersion)
         case CreateDoc(k, doc) => state { m: KVMap =>
-          m.get(k).map(_ => m -> ValueExists(k).left).
-            getOrElse(modifyStateDbv(m + (k -> doc), DBDocument(k, genCommitVersion(doc), doc)))
+          m.get(k) match {
+            case Some(_) => throw new error.DocumentAlreadyExistsException(k.value)
+            case None => modifyStateDbv(m + (k -> doc), DBDocument(k, genCommitVersion(doc), doc))
+          }
         }
         case RemoveKey(k) => state { m: KVMap =>
-          val keyOrError = m.get(k).map(_ => k.right).getOrElse(ValueNotFound(k).left)
-          keyOrError.fold(t => m -> t.left, key => modifyState(m - k))
+          val key = m.get(k).map(_ => k).getOrElse(throw new error.DocumentDoesNotExistException(k.value, "Memory"))
+          ((m - k), ())
         }
         case GetCounter(k) => getCounter(k)
         case IncrementCounter(k, delta) => incrementCounter(k, delta)
+        case Attempt(op) => StateT[Task, KVMap, A] { map =>
+          executeKVState(op).run(map).attempt.map {
+            case \/-((newState, value)) => (newState, value.right)
+            case -\/(throwable) => (map, throwable.left)
+          }
+        }
+        case Pure(a) => a().point[KVState]
       }
     }
   }

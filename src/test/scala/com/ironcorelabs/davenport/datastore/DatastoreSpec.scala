@@ -29,15 +29,16 @@ abstract class DatastoreSpec extends TestBase {
     (Key("key" + i) -> RawJsonString("val" + i))
   }.toList
 
-  def getDocString(k: Key): DBProg[RawJsonString] = getDoc(k).map(_.data)
+  def getDocString(k: Key): DBOps[RawJsonString] = getDoc(k).map(_.data)
 
-  def createAndGet(k: Key, v: RawJsonString): DBProg[RawJsonString] = for {
+  def createAndGet(k: Key, v: RawJsonString): DBOps[RawJsonString] = for {
     _ <- createDoc(k, v)
     newV <- getDocString(k)
   } yield newV
 
   //Couple helper functions
   def run[A](prog: DBProg[A]): DBError \/ A = emptyDatastore.execute(prog).run
+  def run[A](prog: DBOps[A]): DBError \/ A = emptyDatastore.execute(prog).attempt.run.leftMap(DBError.fromThrowable(_))
 
   def runProcess[A](process: Process[DBOps, A]): Throwable \/ IndexedSeq[A] =
     process.execute(emptyDatastore).runLog.attemptRun
@@ -67,8 +68,8 @@ abstract class DatastoreSpec extends TestBase {
       val datastore = emptyDatastore
       val createTask = testCreate.execute(datastore)
       //This is split into 2 to ensure the first is successful.
-      createTask.run.value
-      createTask.run shouldBe left
+      createTask.attemptRun.value
+      createTask.attemptRun shouldBe left
     }
     "update a doc that exists with correct commitVersion" in {
       val testUpdate = for {
@@ -153,14 +154,14 @@ abstract class DatastoreSpec extends TestBase {
     "lift single create into process" in {
       val res = runProcess(createAndGet(k, v).process).value
       res should have length (1)
-      res.head.value shouldBe v
+      res.head shouldBe v
     }
 
     "show Process[Task] coming together with Process[DBOps]" in {
       val dataStream = Process.eval(Task.now(k -> v))
       val task: Task[IndexedSeq[DBError \/ RawJsonString]] = dataStream.flatMap {
         case (key, value) =>
-          createDoc(key, value).map(_.data).process.execute(emptyDatastore)
+          attemptDBError(createDoc(key, value).map(_.data)).process.execute(emptyDatastore)
       }.runLog
       val result = task.run
       result should have size (1)
@@ -176,11 +177,12 @@ abstract class DatastoreSpec extends TestBase {
       //Setup the backing store
       createOne.execute(datastore).run.value
       //create one should cause the whole thing to report error
-      val error = (createTwo *> createOne).execute(datastore).run.leftValue
+      //COLT - Look into what the difference really is.
+      val error = (attemptDBError(createTwo) *> attemptDBError(createOne)).execute(datastore).run.leftValue
       error.message should include("already exists")
 
       //check to ensure that ever though the last operation failed, it still committed everything before `createOne`.
-      val (r1, r2) = (getDocString(k) |@| getDocString(k2))(_ -> _).execute(datastore).run.value
+      val (r1, r2) = attemptDBError((getDocString(k) |@| getDocString(k2))(_ -> _)).execute(datastore).run.value
       r1 shouldBe v //This is in there because of the setup
       r2 shouldBe v2 //This should be in there because createTwo succeeded.
     }
@@ -190,14 +192,13 @@ abstract class DatastoreSpec extends TestBase {
     //
     "be happy doing initial batch import" in {
       val res = runProcess(batch.createDocs(tenrows)).value
-      res.toList.separate._2.length shouldBe tenrows.length
+      res.toList.length shouldBe tenrows.length
     }
     "return errors batch importing the same items again" in {
       val datastore = emptyDatastore
       val initialInsertResult = batch.createDocs(tenrows).execute(datastore).runLog.run
-      //Verified by another test, but sanity check.
-      initialInsertResult.forall(_.isRight) shouldBe true
-      val res = batch.createDocs(tenrows ++ fiveMoreRows).execute(datastore).runLog.run
+
+      val res = batch.createDocsWithAttempt(tenrows ++ fiveMoreRows).execute(datastore).runLog.run
       res.length shouldBe tenrows.length + fiveMoreRows.length
       val (lefts, rights) = res.toList.separate
       lefts.length shouldBe tenrows.length
@@ -206,12 +207,12 @@ abstract class DatastoreSpec extends TestBase {
     "fail after on first error if we pass in a halting function" in {
       val datastore = emptyDatastore
       val initialInsert = batch.createDocs(tenrows).execute(datastore).runLog.attemptRun.value
-      val res = batch.createDocs(tenrows).takeThrough(_.isRight).execute(datastore).runLog.attemptRun.value
+      val res = batch.createDocsWithAttempt(tenrows).takeThrough(_.isRight).execute(datastore).runLog.attemptRun.value
       res.length shouldBe 1
       res.head shouldBe left
     }
     "don't try and insert first 5 and return 5 errors" in {
-      val res = runProcess(batch.createDocs(tenrows.drop(5))).value
+      val res = runProcess(batch.createDocsWithAttempt(tenrows.drop(5))).value
       res.length shouldBe 5
       res.toList.separate._2.length shouldBe 5
     }

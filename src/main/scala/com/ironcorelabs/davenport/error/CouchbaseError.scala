@@ -18,10 +18,16 @@ final case class TemporaryFailureException() extends CouchbaseException("The cou
 
 //For the following I need to defer which constructor to call in the base class which I cannot do using the normal syntax.
 //The following was taken from Seth's answer on SO: http://stackoverflow.com/a/3299832/1226945
-trait DocumentDecodeFailedException extends CouchbaseException with CouchbaseError
+trait DocumentDecodeFailedException extends CouchbaseException with CouchbaseError {
+  def key: String
+}
 object DocumentDecodeFailedException {
-  def apply(cause: DecodeError): DocumentDecodeFailedException = cause match {
-    case DecodeError(message, None) => new CouchbaseException(message) with DocumentDecodeFailedException
-    case DecodeError(message, Some(ex)) => new CouchbaseException(message, ex) with DocumentDecodeFailedException
+  def apply(keyString: String, cause: DecodeError): DocumentDecodeFailedException = cause match {
+    case DecodeError(message, None) => new CouchbaseException(message) with DocumentDecodeFailedException {
+      val key: String = keyString
+    }
+    case DecodeError(message, Some(ex)) => new CouchbaseException(message, ex) with DocumentDecodeFailedException {
+      val key: String = keyString
+    }
   }
 }

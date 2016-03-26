@@ -12,10 +12,15 @@ import scalaz.syntax.foldable._
  */
 final object batch { //scalastyle:ignore 
   def liftToProcess[A](prog: DBProg[A]): Process[DBOps, DBError \/ A] = Process.eval(prog.run)
+  def liftToProcess[A](prog: DBOps[A]): Process[DBOps, A] = Process.eval(prog)
 
   /**
    * Create all values in the Foldable F.
    */
-  def createDocs[F[_]](foldable: F[(Key, RawJsonString)])(implicit F: Foldable[F]): Process[DBOps, DBError \/ DBValue] =
-    Process.emitAll(foldable.toList).evalMap { case (key, json) => createDoc(key, json).run }
+  def createDocs[F[_]](foldable: F[(Key, RawJsonString)])(implicit F: Foldable[F]): Process[DBOps, DBValue] =
+    Process.emitAll(foldable.toList).evalMap { case (key, json) => createDoc(key, json) }
+
+  def createDocsWithAttempt[F[_]](foldable: F[(Key, RawJsonString)])(implicit F: Foldable[F]): Process[DBOps, DBError \/ DBValue] =
+    Process.emitAll(foldable.toList).evalMap { case (key, json) => attemptDBError(createDoc(key, json)) }
+
 }

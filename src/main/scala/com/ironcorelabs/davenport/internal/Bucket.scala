@@ -60,7 +60,7 @@ final class Bucket(core: CouchbaseCore, val name: String, password: Option[Strin
 
   private final def decodeDBDocument[A](t: Task[DBDocument[ByteVector]])(implicit decoder: ByteVectorDecoder[A]): Task[DBDocument[A]] = {
     t.flatMap { document =>
-      val errorOrA = Task.fromDisjunction(decoder.decode(document.data).leftMap(DocumentDecodeFailedException(_)))
+      val errorOrA = Task.fromDisjunction(decoder.decode(document.data).leftMap(DocumentDecodeFailedException(document.key.value, _)))
       errorOrA.map(a => document.copy(data = a)) //Discard the value, coulde
     }
   }

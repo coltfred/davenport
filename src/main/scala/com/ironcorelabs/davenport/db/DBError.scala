@@ -1,7 +1,8 @@
 //
 // Copyright (c) 2015 IronCore Labs
 //
-package com.ironcorelabs.davenport.db
+package com.ironcorelabs.davenport
+package db
 
 /**
  * ADT for errors that might happen in working with our grammar.
@@ -9,6 +10,17 @@ package com.ironcorelabs.davenport.db
 sealed abstract class DBError {
   def message: String
 }
+
+object DBError {
+  def fromThrowable(t: Throwable): DBError = t match {
+    case error.DocumentDoesNotExistException(key, _) => ValueNotFound(Key(key))
+    case error.DocumentAlreadyExistsException(id) => ValueExists(Key(id))
+    case error.CASMismatchException(id) => CommitVersionMismatch(Key(id))
+    case ex: error.DocumentDecodeFailedException => DeserializationError(Key(ex.key), ex.getMessage)
+    case t => GeneralError(t)
+  }
+}
+
 /**
  * If no value was found at the requested key.
  */

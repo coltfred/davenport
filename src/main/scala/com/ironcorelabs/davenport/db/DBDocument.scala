@@ -38,14 +38,14 @@ final object DBDocument {
    * Create a document out of `t` using `codec` and store it at `key`.
    */
   def create[T](key: Key, t: T)(implicit codec: EncodeJson[T]): DBProg[DBDocument[T]] =
-    createDoc(key, RawJsonString(t.asJson.nospaces)).map(_.map(_ => t))
+    liftToDBProg(createDoc(key, RawJsonString(t.asJson.nospaces)).map(_.map(_ => t)))
 
   /**
    * Fetch a document from the datastore and decode it using `codec`
    * If deserialization fails the DBProg will result in a left disjunction.
    */
   def get[T](k: Key)(implicit codec: DecodeJson[T]): DBProg[DBDocument[T]] = for {
-    s <- getDoc(k)
+    s <- liftToDBProg(getDoc(k))
     decodedValue = s.data.value.decodeWithMessage({ t: T => t.right }, DeserializationError(k, _).left)
     v <- liftDisjunction(decodedValue)
   } yield DBDocument(k, s.commitVersion, v)
@@ -62,11 +62,11 @@ final object DBDocument {
    * Update the document to a new value.
    */
   def update[T](doc: DBDocument[T])(implicit codec: EncodeJson[T]): DBProg[DBDocument[T]] =
-    updateDoc(doc.key, RawJsonString(doc.data.asJson.toString), doc.commitVersion).
-      map(newDoc => newDoc.map(_ => doc.data))
+    liftToDBProg(updateDoc(doc.key, RawJsonString(doc.data.asJson.toString), doc.commitVersion).
+      map(newDoc => newDoc.map(_ => doc.data)))
 
   /**
    * Remove the document stored at key `key`
    */
-  def remove(key: Key): DBProg[Unit] = removeKey(key)
+  def remove(key: Key): DBProg[Unit] = liftToDBProg(removeKey(key))
 }

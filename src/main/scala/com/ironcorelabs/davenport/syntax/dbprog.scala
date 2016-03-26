@@ -19,4 +19,9 @@ trait DBProgOps {
     def process: Process[DBOps, DBError \/ A] = batch.liftToProcess(self)
     def execute(d: Datastore): Task[DBError \/ A] = d.execute(self.run)
   }
+
+  implicit class OurDBOpsOps[A](self: DBOps[A]) {
+    def process: Process[DBOps, A] = batch.liftToProcess(self)
+    def execute(d: Datastore): Task[A] = d.execute(self)
+  }
 }

@@ -53,7 +53,7 @@ class CouchDatastoreSpec extends DatastoreSpec with BeforeAndAfter with KnobsCon
       } yield dbValue.data
       val bucket = connection.openBucket(BucketNameAndPassword("default", None))
       val task = bucket.flatMap(CouchDatastore.executeK(createAndGet).run(_))
-      task.run.value shouldBe v
+      task.run shouldBe v
     }
   }
 }

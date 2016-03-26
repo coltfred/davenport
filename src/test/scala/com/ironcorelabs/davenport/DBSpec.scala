@@ -23,12 +23,19 @@ class DBSpec extends TestBase {
       error.message should include("blah")
     }
 
-    "fail with a GeneralError when lifting a throwable into a DBProg" in {
+    "catch the exception when attempting" in {
       val datastore = MemDatastore.empty
       val ex = new Exception("I am an exception hear me roar!")
-      val error = datastore.execute(liftIntoDBProg(ex.left)).run.leftValue
+      val error = datastore.execute(pure(throw ex).attempt).run.leftValue
+      error shouldBe ex
+    }
+
+    "catch the exception in a general error when using attemptDBError" in {
+      val datastore = MemDatastore.empty
+      val ex = new Exception("I am an exception hear me roar!")
+      val error = datastore.execute(attemptDBError(pure(throw ex))).run.leftValue
       error shouldBe an[GeneralError]
-      error.message shouldBe ex.getMessage
+      error.message should include("roar")
     }
 
     "fail with a GeneralError when lifting a DBError into a DBProg" in {
