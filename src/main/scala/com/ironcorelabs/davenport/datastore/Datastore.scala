@@ -4,15 +4,15 @@
 package com.ironcorelabs.davenport
 package datastore
 
-import scalaz.concurrent.Task
-import scalaz.stream.Process
-import scalaz._
+import fs2.{ Task, Stream }
+import cats.arrow.FunctionK
+import fs2.interop.cats.reverse._
 import db._
 
 trait Datastore {
   //Define how you map each op to a Task using a Natural Transformation.
-  def execute: (DBOps ~> Task)
+  def execute: FunctionK[DBOps, Task]
 
-  def execute[A](db: DBProg[A]): Task[DBError \/ A] = execute(db.run)
-  def executeP[A](p: Process[DBOps, A]): Process[Task, A] = p.translate(execute)
+  def execute[A](db: DBProg[A]): Task[Either[DBError, A]] = execute(db.value)
+  def executeP[A](p: Stream[DBOps, A]): Stream[Task, A] = p.translate(functionKToUf1(execute))
 }

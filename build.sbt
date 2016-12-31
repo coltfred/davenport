@@ -1,7 +1,5 @@
 scalaVersion := "2.11.8"
 
-val ScalazVersion = "7.1.9"
-
 // crossScalaVersions := Seq("2.10.4")
 
 resolvers ++= Seq(
@@ -12,25 +10,24 @@ resolvers ++= Seq(
 
 // Production
 libraryDependencies ++= Seq(
-  "org.scalaz" %% "scalaz-core" % ScalazVersion, // for type awesomeness
-  "org.scalaz" %% "scalaz-concurrent" % ScalazVersion, // for type awesomeness
+  "org.typelevel" %% "cats" % "0.8.1",
+  "co.fs2" %% "fs2-core" % "0.9.2",
+  "co.fs2" %% "fs2-cats" % "0.2.0",
   "com.couchbase.client" % "core-io" % "1.2.3",
   "io.reactivex" %% "rxscala" % "0.25.0", // to better work with the couchbase java client
-  "io.argonaut" %% "argonaut" % "6.1", // json (de)serialization scalaz style
-  "org.scalaz.stream" %% "scalaz-stream" % "0.8.4",
-  "org.scodec" %% "scodec-bits" % "1.1.1"
+  "io.argonaut" %% "argonaut-cats" % "6.2-RC2",
+  "org.scodec" %% "scodec-bits" % "1.1.2"
 )
 
 // Test
 libraryDependencies ++= Seq(
-  "org.scalatest" % "scalatest_2.11" % "2.2.1" % "test",
-  "org.typelevel" %% "scalaz-scalatest" % "0.2.2" % "test",
-  "org.scalacheck" %% "scalacheck" % "1.12.5" % "test",
-  "org.scalaz" %% "scalaz-scalacheck-binding" % ScalazVersion,
-  "com.github.melrief" %% "pureconfig" % "0.2.2" % "test"
+  "com.ironcorelabs" %% "cats-scalatest" % "2.1.1",
+  "org.scalatest" %% "scalatest" % "3.0.0" % "test",
+  "org.scalacheck" %% "scalacheck" % "1.13.4" % "test",
+  "com.github.melrief" %% "pureconfig" % "0.4.0" % "test"
 )
 
-addCompilerPlugin("org.spire-math" %% "kind-projector" % "0.6.3")
+addCompilerPlugin("org.spire-math" %% "kind-projector" % "0.9.3")
 
 // Code coverage checks
 coverageMinimum := 70

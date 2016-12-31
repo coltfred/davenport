@@ -5,7 +5,7 @@ package com.ironcorelabs.davenport
 
 import scala.collection.concurrent.TrieMap
 
-import scalaz.concurrent.Task
+import fs2.{ Task, Strategy }
 
 // Couchbase
 import com.couchbase.client.core.CouchbaseCore
@@ -27,7 +27,7 @@ import rx.lang.scala.JavaConversions._
  */
 final case class CouchConnection(config: DavenportConfig) {
   private val environment = createConfig
-  private val maybeCore = internal.CouchbaseCoreUtil.createCouchbaseCore(environment, config.hosts).attemptRun
+  private val maybeCore = internal.CouchbaseCoreUtil.createCouchbaseCore(environment, config.hosts).unsafeAttemptRunSync.fold(_ => throw new Exception("Not async"), identity)
   //This is only package private for testing. Use openBucket if you need a bucket.
   private[davenport] val openBuckets: TrieMap[BucketNameAndPassword, Bucket] = new TrieMap()
 
@@ -45,13 +45,11 @@ final case class CouchConnection(config: DavenportConfig) {
   /**
    * Attempt to get the current cached bucket for the BucketNameAndPassword. If it isn't in the cache, create a new one.
    */
-  def openBucket(bucketAndPassword: BucketNameAndPassword): Task[Bucket] = Task.delay {
-    openBuckets.get(bucketAndPassword).map(Task.now(_)).getOrElse {
-      createNewBucket(bucketAndPassword.name, bucketAndPassword.password).map { newBucket =>
-        openBuckets.putIfAbsent(bucketAndPassword, newBucket).getOrElse(newBucket)
-      }
-      //We have to run here because the rx.exceptions.OnErrorFailedException escapes the task, the outer Task.delay catches.
-    }.run
+  def openBucket(bucketAndPassword: BucketNameAndPassword): Task[Bucket] = openBuckets.get(bucketAndPassword).map(Task.now(_)).getOrElse {
+    createNewBucket(bucketAndPassword.name, bucketAndPassword.password).map { newBucket =>
+      openBuckets.putIfAbsent(bucketAndPassword, newBucket).getOrElse(newBucket)
+    }
+    //We have to run here because the rx.exceptions.OnErrorFailedException escapes the task, the outer Task.delay catches.
   }.handleWith {
     //This exception happens when the cluster and environment have been shut down. Try and give a slightly
     //better message.
@@ -72,8 +70,8 @@ final case class CouchConnection(config: DavenportConfig) {
    * Disconnect this CouchConnection. The Connection will no longer be usable and all datastores created from it will
    * no longer work.
    */
-  def disconnect: Task[Boolean] = for {
-    core <- Task.fromDisjunction(maybeCore)
+  def disconnect(implicit strat: Strategy): Task[Boolean] = for {
+    core <- maybeCore.fold(Task.fail, Task.now)
     _ <- internal.CouchbaseCoreUtil.disconnectCouchbaseCore(core)
     environmentResultAsJava <- util.observable.toSingleItemTask(environment.shutdownAsync)
     environmentResult = Boolean2boolean(environmentResultAsJava)
@@ -81,7 +79,7 @@ final case class CouchConnection(config: DavenportConfig) {
   } yield environmentResult
 
   private def createNewBucket(bucketName: String, password: Option[String]): Task[Bucket] = for {
-    core <- Task.fromDisjunction(maybeCore)
+    core <- maybeCore.fold(Task.fail, Task.now)
     bucket <- internal.CouchbaseCoreUtil.openBucket(core, bucketName, password)
   } yield bucket
 }

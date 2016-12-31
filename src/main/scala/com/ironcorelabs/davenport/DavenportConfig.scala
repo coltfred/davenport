@@ -3,7 +3,7 @@
 //
 package com.ironcorelabs.davenport
 
-import scalaz.NonEmptyList
+import cats.data.NonEmptyList
 
 /**
  * The configuration class to tell Davenport how to configure the [[CouchConnection]].
@@ -27,7 +27,7 @@ final case class DavenportConfig(
    */
   def setHosts(maybeHosts: List[String]): DavenportConfig = maybeHosts match {
     case Nil => this
-    case hd :: tail => copy(hosts = NonEmptyList.nel(hd, tail))
+    case hd :: tail => copy(hosts = NonEmptyList(hd, tail))
   }
 
   /**
@@ -52,7 +52,7 @@ final object DavenportConfig {
     poolSize: Int = DefaultIOPoolSize,
     computationPoolSize: Int = DefaultComputationPoolSize,
     kvEndpoints: Int = DefaultKeyValueEndpoints,
-    hosts: NonEmptyList[String] = NonEmptyList.nels("127.0.0.1")
+    hosts: NonEmptyList[String] = NonEmptyList.of("127.0.0.1")
   ): DavenportConfig =
     DavenportConfig(poolSize, computationPoolSize, kvEndpoints, hosts)
   private final val DefaultIOPoolSize: Int = 4

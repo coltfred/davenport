@@ -5,9 +5,7 @@ package com.ironcorelabs.davenport
 package syntax
 
 import db._
-import scalaz.stream.Process
-import scalaz._
-import scalaz.concurrent.Task
+import fs2.{ Task, Stream }
 import datastore.Datastore
 
 // The convention is for syntax objects to start with lower case, so they look
@@ -16,7 +14,7 @@ final object dbprog extends DBProgOps // scalastyle:ignore
 
 trait DBProgOps {
   implicit class OurDBProgOps[A](self: DBProg[A]) {
-    def process: Process[DBOps, DBError \/ A] = batch.liftToProcess(self)
-    def execute(d: Datastore): Task[DBError \/ A] = d.execute(self.run)
+    def process: Stream[DBOps, Either[DBError, A]] = batch.liftToStream(self)
+    def execute(d: Datastore): Task[Either[DBError, A]] = d.execute(self.value)
   }
 }

@@ -4,7 +4,9 @@
 package com.ironcorelabs.davenport.db
 
 import argonaut._, Argonaut._
-import scalaz.syntax.either._
+import cats._
+import cats.data._
+import cats.implicits._
 
 /**
  * A document that's either destined to be put into the DB or came out of the DB.
@@ -17,21 +19,26 @@ final case class DBDocument[A](key: Key, commitVersion: CommitVersion, data: A) 
 }
 
 final object DBDocument {
-  import scalaz.{ Functor, Equal }
-  import scalaz.std.string._
-  import scalaz.std.anyVal._
+  import cats._
+  import cats.data._
+  import cats.arrow.FunctionK
+  import cats.implicits._
   implicit val instance: Functor[DBDocument] = new Functor[DBDocument] {
     def map[A, B](fa: DBDocument[A])(f: A => B): DBDocument[B] = fa.map(f)
   }
 
-  implicit def dbDocumentEqual[A](implicit aEq: Equal[A]): Equal[DBDocument[A]] = new Equal[DBDocument[A]] {
-    override def equalIsNatural: Boolean = aEq.equalIsNatural
+  // implicit def jsonDecode[A](implicit decodeA: DecodeJson[A]): DecodeJson[DBDocument[A]] = for {
+  //   a <- decodeA
+  //   key <- DecodeJson[String]
+  // } yield DBDocument(Key(key), Comm)
 
-    override def equal(doc1: DBDocument[A], doc2: DBDocument[A]): Boolean = (doc1, doc2) match {
-      case (DBDocument(key1, commitVersion1, a1), DBDocument(key2, commitVersion2, a2)) =>
-        aEq.equal(a1, a2) && Equal[String].equal(key1.value, key2.value) &&
-          Equal[Long].equal(commitVersion1.value, commitVersion2.value)
-    }
+  implicit def dbDocumentEqual[A](implicit aEq: Eq[A]): Eq[DBDocument[A]] = Eq.instance[DBDocument[A]] {
+    (doc1, doc2) =>
+      (doc1, doc2) match {
+        case (DBDocument(key1, commitVersion1, a1), DBDocument(key2, commitVersion2, a2)) =>
+          aEq.eqv(a1, a2) && Eq[String].eqv(key1.value, key2.value) &&
+            Eq[Long].eqv(commitVersion1.value, commitVersion2.value)
+      }
   }
 
   /**
@@ -46,7 +53,7 @@ final object DBDocument {
    */
   def get[T](k: Key)(implicit codec: DecodeJson[T]): DBProg[DBDocument[T]] = for {
     s <- getDoc(k)
-    decodedValue = s.data.value.decodeWithMessage({ t: T => t.right }, DeserializationError(k, _).left)
+    decodedValue = s.data.value.decodeWithMessage({ t: T => Either.right(t) }, { s: String => Either.left(DeserializationError(k, s)) })
     v <- liftDisjunction(decodedValue)
   } yield DBDocument(k, s.commitVersion, v)
 

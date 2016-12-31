@@ -9,8 +9,8 @@ import com.couchbase.client.core.env.{ DefaultCoreEnvironment, CoreEnvironment }
 import com.couchbase.client.core.message.cluster.{ DisconnectResponse, DisconnectRequest, OpenBucketRequest, OpenBucketResponse, SeedNodesRequest, SeedNodesResponse } //scalastyle:ignore
 
 import rx.lang.scala.JavaConversions._
-import scalaz.concurrent.Task
-import scalaz.NonEmptyList
+import fs2.Task
+import cats.data.NonEmptyList
 import scala.collection.JavaConverters._
 
 /**
@@ -33,7 +33,7 @@ private[davenport] final object CouchbaseCoreUtil {
    * Initialize core by sending it the seed nodes.
    */
   final def initializeSeedNodes(core: CouchbaseCore, nodes: NonEmptyList[String]): Task[Boolean] =
-    toSingleItemTask(core.send[SeedNodesResponse](new SeedNodesRequest(nodes.list.asJava))).map(_.status.isSuccess)
+    toSingleItemTask(core.send[SeedNodesResponse](new SeedNodesRequest(nodes.toList.asJava))).map(_.status.isSuccess)
 
   /**
    * Ask core to open a bucket with bucketName as its name and possibly a password.

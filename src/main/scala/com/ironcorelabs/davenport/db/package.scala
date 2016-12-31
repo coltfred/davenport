@@ -3,18 +3,22 @@
 //
 package com.ironcorelabs.davenport
 
-import scalaz._, Scalaz._, scalaz.concurrent.Task
+import fs2.Task
+import cats._
+import cats.data._
+import cats.implicits._
+import cats.free._
 
 package object db {
-  implicit val DBOpsMonad: Monad[DBOps] = Free.freeMonad[Coyoneda[DBOp, ?]]
+  implicit val DBOpsMonad: Monad[DBOps] = Monad[DBOps]
 
   /** A Free Co-yoneda of [[DBOp]] classes */
-  type DBOps[A] = Free.FreeC[DBOp, A]
+  type DBOps[A] = Free[DBOp, A]
 
   /**
    * The basic building block sent to the datastore.
    *
-   *  Effectively this captures expected return type of `DBError \/ A` and a series of [[DBOp]] classes or functions combined together.
+   *  Effectively this captures expected return type of `Either[DBError, A]` and a series of [[DBOp]] classes or functions combined together.
    *  When passed to an datastore such as `MemDatastore` or `CouchDatastore`, these are executed.
    */
   type DBProg[A] = EitherT[DBOps, DBError, A]
@@ -72,9 +76,9 @@ package object db {
    *  This will most often be used when using for comprehensions mixing [[DBOp]]
    *  operations with other data extraction such as json de/serialization.
    */
-  def liftIntoDBProg[A](opt: Option[A], dbError: DBError): DBProg[A] = EitherT.eitherT(Monad[DBOps].point(opt \/> dbError))
+  def liftIntoDBProg[A](opt: Option[A], dbError: DBError): DBProg[A] = EitherT.fromOption(opt, dbError)
   def liftIntoDBProg[A](opt: Option[A], errormessage: String): DBProg[A] = liftIntoDBProg(opt, GeneralError(new Exception(errormessage)))
-  def liftIntoDBProg[A](either: Throwable \/ A): DBProg[A] = liftDisjunction(either.leftMap(GeneralError(_)))
-  def liftDisjunction[A](either: DBError \/ A): DBProg[A] = EitherT.eitherT(Monad[DBOps].point(either))
-  private def liftToFreeEitherT[A](a: DBOp[DBError \/ A]): DBProg[A] = EitherT.eitherT[DBOps, DBError, A](Free.liftFC(a))
+  def liftIntoDBProg[A](either: Either[Throwable, A]): DBProg[A] = liftDisjunction(either.leftMap(GeneralError(_)))
+  def liftDisjunction[A](either: Either[DBError, A]): DBProg[A] = EitherT(Monad[DBOps].pure(either))
+  private def liftToFreeEitherT[A](a: DBOp[Either[DBError, A]]): DBProg[A] = EitherT[DBOps, DBError, A](Free.liftF(a))
 }

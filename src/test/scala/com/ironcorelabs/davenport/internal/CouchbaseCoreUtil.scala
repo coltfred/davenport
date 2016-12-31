@@ -7,7 +7,7 @@ package internal
 import com.couchbase.client.core.config.ConfigurationException
 import com.couchbase.client.core.CouchbaseException
 import error._
-import scalaz.concurrent.Task
+import fs2.Task
 
 class CouchbaseCoreUtilTest extends TestBase {
   "bucketErrorHandler" should {

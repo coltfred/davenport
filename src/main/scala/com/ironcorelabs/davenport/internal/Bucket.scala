@@ -5,8 +5,7 @@ package com.ironcorelabs.davenport
 package internal
 
 import com.couchbase.client.deps.io.netty.buffer.{ ByteBuf, Unpooled }
-import scalaz.concurrent.Task
-import scalaz.\/
+import fs2.{ Task, Strategy }
 import com.couchbase.client.core.message.kv._
 import com.couchbase.client.core.{ CouchbaseException, CouchbaseCore }
 import com.couchbase.client.core.message.ResponseStatus
@@ -17,12 +16,13 @@ import error._
 import scodec.bits.ByteVector
 import scala.concurrent.duration.Duration
 import codec.{ ByteVectorDecoder, ByteVectorEncoder }
+import cats.syntax.all._
 
 /**
  * A reference to a "Bucket" in couchbase. This bucket will be communicating with core.
  * Note that the core must be initialized and this should really only be created via CouchConnection.
  */
-final class Bucket(core: CouchbaseCore, val name: String, password: Option[String]) {
+final class Bucket(core: CouchbaseCore, val name: String, password: Option[String], val strategy: Strategy) {
 
   /**
    * Get a value associated with key and attempt to decode it into the type A.
@@ -60,7 +60,7 @@ final class Bucket(core: CouchbaseCore, val name: String, password: Option[Strin
 
   private final def decodeDBDocument[A](t: Task[DBDocument[ByteVector]])(implicit decoder: ByteVectorDecoder[A]): Task[DBDocument[A]] = {
     t.flatMap { document =>
-      val errorOrA = Task.fromDisjunction(decoder.decode(document.data).leftMap(DocumentDecodeFailedException(_)))
+      val errorOrA = decoder.decode(document.data).leftMap(DocumentDecodeFailedException(_)).fold(Task.fail, Task.now)
       errorOrA.map(a => document.copy(data = a)) //Discard the value, coulde
     }
   }
@@ -77,7 +77,7 @@ private object Bucket {
   def apply(core: CouchbaseCore, name: String): Bucket = apply(core, name, None)
   def apply(core: CouchbaseCore, name: String, password: Option[String]): Bucket = new Bucket(core, name, password)
 
-  def get(core: CouchbaseCore, bucket: String, id: String): Task[DBDocument[ByteVector]] = {
+  def get(core: CouchbaseCore, bucket: String, id: String)(implicit strat: Strategy): Task[DBDocument[ByteVector]] = {
     toSingleItemTask(core.send[GetResponse](new GetRequest(id, bucket))).flatMap { res =>
       toByteVector(id, bucket, res).map(DBDocument(Key(id), CommitVersion(res.cas), _))
     }

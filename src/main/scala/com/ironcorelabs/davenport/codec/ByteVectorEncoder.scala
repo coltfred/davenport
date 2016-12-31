@@ -5,7 +5,8 @@ package com.ironcorelabs.davenport
 package codec
 
 import scodec.bits.ByteVector
-import scalaz.{ Contravariant, \/ }
+import cats.functor.Contravariant
+import cats.syntax.either._
 import argonaut._
 
 /**
@@ -22,7 +23,7 @@ object ByteVectorEncoder {
   }
   implicit final val IdEncoder: ByteVectorEncoder[ByteVector] = ByteVectorEncoder(identity)
   implicit final val StringEncoder: ByteVectorEncoder[String] = ByteVectorEncoder { string =>
-    \/.fromEither(ByteVector.encodeUtf8(string)).getOrElse {
+    ByteVector.encodeUtf8(string).getOrElse {
       throw new IllegalArgumentException(s"It shouldn't be possible, but $string couldn't be encoded as bytes.")
     }
   }
